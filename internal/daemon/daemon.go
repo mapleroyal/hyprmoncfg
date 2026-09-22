@@ -282,6 +282,8 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	pending := false
+	var pendingGeneration uint64
+	topologyProbePending := false
 	settlingAfterWake := false
 	displayGuard := displaySleepGuard{}
 	stopDebounce := func() {
@@ -342,6 +344,11 @@ func (s *Service) Run(ctx context.Context) error {
 			}
 			s.cfg.Logf("monitor event received: %s connector=%s", ev.Type, name)
 			probeGeneration++
+			// A consumed hotplug invalidates any earlier debounce or busy retry.
+			// Other trigger sources must also wait for this generation's probe.
+			pending = false
+			stopDebounce()
+			topologyProbePending = true
 			if !systemSuspended {
 				requestProbe(reason)
 			}
@@ -357,6 +364,7 @@ func (s *Service) Run(ctx context.Context) error {
 			}
 			probeGeneration++
 			systemSuspended = sleeping
+			topologyProbePending = false
 			if sleeping {
 				s.cfg.LaptopToggle.Reset()
 				// A lid close that suspends the machine must not be applied on
@@ -418,10 +426,18 @@ func (s *Service) Run(ctx context.Context) error {
 			if systemSuspended || probe.generation != probeGeneration {
 				continue
 			}
+			// A poll can replace a queued event probe, but it still owes the
+			// latest hotplug a result and a fresh debounce/retry afterwards.
+			topologyChanged := topologyProbePending
+			if topologyChanged {
+				pending = false
+				stopDebounce()
+			}
+			topologyProbePending = false
 			monitors, err := probe.monitors, probe.err
 			if err != nil {
 				s.cfg.Logf("monitor probe failed: %v", err)
-				if probe.reason != "poll" {
+				if topologyChanged || probe.reason != "poll" {
 					scheduleMonitorTrigger("monitor-query-retry")
 				}
 				continue
@@ -442,7 +458,7 @@ func (s *Service) Run(ctx context.Context) error {
 				continue
 			}
 
-			if probe.reason != "poll" {
+			if topologyChanged || probe.reason != "poll" {
 				scheduleMonitorTrigger(probe.reason)
 				continue
 			}
@@ -466,16 +482,21 @@ func (s *Service) Run(ctx context.Context) error {
 			if systemSuspended || next.generation != probeGeneration {
 				continue
 			}
+			if topologyProbePending {
+				s.cfg.Logf("deferred trigger while monitor probe pending: %s", next.reason)
+				continue
+			}
 			if displayGuard.sleeping {
 				deferForDisplaySleep(next.reason)
 				continue
 			}
 			s.cfg.Logf("triggered: %s", next.reason)
 			pending = true
+			pendingGeneration = next.generation
 			stopDebounce()
 			debounceTimer.Reset(next.delay)
 		case <-debounceTimer.C:
-			if systemSuspended || !pending {
+			if systemSuspended || !pending || pendingGeneration != probeGeneration || topologyProbePending {
 				continue
 			}
 			err := s.tryApplyBest(ctx)
