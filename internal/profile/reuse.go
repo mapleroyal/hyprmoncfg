@@ -65,7 +65,7 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		}
 	}
 	used := make(map[string]bool, len(mapping))
-	repairedMirrors := make(map[string]bool)
+	needsPlacement := make(map[string]bool)
 	for _, source := range saved.Outputs {
 		targetKey, specified := mapping[source.Key]
 		if !specified && source.Enabled {
@@ -109,6 +109,11 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 			output.Scale = adjusted
 			warnings = append(warnings, fmt.Sprintf("%s: adjusted scale to %.5g for its display mode.", current.Name, adjusted))
 		}
+		oldWidth, oldHeight := source.LogicalSize()
+		newWidth, newHeight := output.LogicalSize()
+		if oldWidth != newWidth || oldHeight != newHeight {
+			needsPlacement[targetKey] = true
+		}
 		// Color/ICC and hardware overrides are display-specific. Keep live
 		// settings when identity changes, even for another unit of one model.
 		if !reuseSameDisplay(source, current, savedIdentityCounts, counts) {
@@ -130,13 +135,13 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		idx := byTarget[targetKey]
 		mirrorKey := mapping[source.MirrorOf]
 		if mirrorKey == "" {
-			repairedMirrors[targetKey] = true
+			needsPlacement[targetKey] = true
 			warnings = append(warnings, fmt.Sprintf("%s: skipped mirror source; retained it as an independent display.", draft.Outputs[idx].Name))
 			continue
 		}
 		mirror := draft.Outputs[byTarget[mirrorKey]]
 		if !mirror.Enabled {
-			repairedMirrors[targetKey] = true
+			needsPlacement[targetKey] = true
 			warnings = append(warnings, fmt.Sprintf("%s: mirror source is disabled; made this display independent.", draft.Outputs[idx].Name))
 			continue
 		}
@@ -189,16 +194,16 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		targetIndex, exists := byTarget[output.MirrorOf]
 		if !exists || targetIndex == i || !draft.Outputs[targetIndex].Enabled || draft.Outputs[targetIndex].MirrorOf != "" {
 			output.MirrorOf = ""
-			repairedMirrors[output.Key] = true
+			needsPlacement[output.Key] = true
 			warnings = append(warnings, fmt.Sprintf("%s: mirror source is no longer independent and enabled; made this display independent.", output.Name))
 		}
 	}
-	// Unassigned outputs stay live. Outputs made independent by mirror repair
-	// also need their own space, even when assigned a saved role. Preserve all
-	// other mapped geometry and move only overlapping extras/repaired mirrors.
+	// Unassigned outputs stay live. Mirror repairs and mode/scale adjustments
+	// may require more room for mapped outputs. Preserve all other mapped
+	// positions and move only overlapping extras or adapted rectangles.
 	for idx := range draft.Outputs {
 		output := &draft.Outputs[idx]
-		if used[output.Key] && !repairedMirrors[output.Key] {
+		if used[output.Key] && !needsPlacement[output.Key] {
 			continue
 		}
 		if !used[output.Key] {
@@ -219,6 +224,14 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 			draft.Workspaces.MonitorOrder = append(draft.Workspaces.MonitorOrder, output.Key)
 		}
 	}
+	// A valid mirror follows its source if collision repair moved that source.
+	for i := range draft.Outputs {
+		output := &draft.Outputs[i]
+		if output.MirrorOf != "" {
+			source := draft.Outputs[byTarget[output.MirrorOf]]
+			output.X, output.Y = source.X, source.Y
+		}
+	}
 	enabled := 0
 	for _, output := range draft.Outputs {
 		if output.Enabled && output.MirrorOf == "" {
@@ -229,6 +242,9 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		return Profile{}, nil, fmt.Errorf("the reused layout must keep at least one independent display enabled")
 	}
 	draft.Normalize()
+	if err := ValidateLayout(draft.Outputs); err != nil {
+		return Profile{}, nil, fmt.Errorf("cannot reuse saved layout: %w", err)
+	}
 	return draft, warnings, nil
 }
 
