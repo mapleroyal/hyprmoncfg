@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+
+	"github.com/crmne/hyprmoncfg/internal/appstatus"
 )
 
 type Server struct {
