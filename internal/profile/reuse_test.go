@@ -295,3 +295,54 @@ func TestReuseLayoutRepairsMappedMirrorWhoseSavedSourceIsDisabled(t *testing.T) 
 		t.Fatalf("disabled dependency was not repaired and reported: output=%+v warnings=%v", mirror, warnings)
 	}
 }
+
+func TestReuseLayoutPlacesRepairedMappedMirrorsOutsideOtherDisplays(t *testing.T) {
+	for _, dependency := range []string{"skipped", "disabled", "chain"} {
+		t.Run(dependency, func(t *testing.T) {
+			monitors := []hypr.Monitor{
+				{Name: "DP-1", Make: "Example", Model: "Source", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1},
+				{Name: "DP-2", Make: "Example", Model: "Mirror A", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, X: 1920},
+				{Name: "DP-3", Make: "Example", Model: "Mirror B", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, X: 3840},
+				{Name: "DP-4", Make: "Example", Model: "Independent", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, X: 5760},
+			}
+			old := append([]hypr.Monitor(nil), monitors...)
+			old[1].MirrorOf, old[2].MirrorOf = old[0].Name, old[0].Name
+			old[1].X, old[2].X, old[3].X = 0, 0, 1920
+			if dependency == "chain" {
+				old[2].MirrorOf = old[1].Name
+			}
+			saved := FromMonitors("Mirrored", old)
+			mapping := make(map[string]string)
+			for _, monitor := range monitors {
+				mapping[monitor.HardwareKey()] = monitor.HardwareKey()
+			}
+			if dependency == "skipped" {
+				mapping[old[0].HardwareKey()] = ""
+			} else if dependency == "disabled" {
+				for i := range saved.Outputs {
+					if saved.Outputs[i].Key == old[0].HardwareKey() {
+						saved.Outputs[i].Enabled = false
+					}
+				}
+			}
+			draft, warnings, err := ReuseLayout(saved, nil, monitors, nil, mapping)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateLayout(draft.Outputs); err != nil {
+				t.Fatalf("repaired mirrors still overlap: %v; outputs=%+v", err, draft.Outputs)
+			}
+			mirror, _ := draft.OutputByKey(monitors[2].HardwareKey())
+			if !mirror.Enabled || mirror.MirrorOf != "" {
+				t.Fatalf("invalid mirror dependency was not repaired: %+v", mirror)
+			}
+			independent, _ := draft.OutputByKey(monitors[3].HardwareKey())
+			if independent.X != old[3].X || independent.Y != old[3].Y {
+				t.Fatalf("ordinary mapped geometry changed: %+v", independent)
+			}
+			if !strings.Contains(strings.Join(warnings, " "), "placed to the right") {
+				t.Fatalf("mirror placement was not disclosed: %v", warnings)
+			}
+		})
+	}
+}

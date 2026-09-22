@@ -65,6 +65,7 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		}
 	}
 	used := make(map[string]bool, len(mapping))
+	repairedMirrors := make(map[string]bool)
 	for _, source := range saved.Outputs {
 		targetKey, specified := mapping[source.Key]
 		if !specified && source.Enabled {
@@ -129,11 +130,13 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		idx := byTarget[targetKey]
 		mirrorKey := mapping[source.MirrorOf]
 		if mirrorKey == "" {
+			repairedMirrors[targetKey] = true
 			warnings = append(warnings, fmt.Sprintf("%s: skipped mirror source; retained it as an independent display.", draft.Outputs[idx].Name))
 			continue
 		}
 		mirror := draft.Outputs[byTarget[mirrorKey]]
 		if !mirror.Enabled {
+			repairedMirrors[targetKey] = true
 			warnings = append(warnings, fmt.Sprintf("%s: mirror source is disabled; made this display independent.", draft.Outputs[idx].Name))
 			continue
 		}
@@ -186,17 +189,21 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 		targetIndex, exists := byTarget[output.MirrorOf]
 		if !exists || targetIndex == i || !draft.Outputs[targetIndex].Enabled || draft.Outputs[targetIndex].MirrorOf != "" {
 			output.MirrorOf = ""
+			repairedMirrors[output.Key] = true
 			warnings = append(warnings, fmt.Sprintf("%s: mirror source is no longer independent and enabled; made this display independent.", output.Name))
 		}
 	}
-	// Unassigned outputs stay live. Move only ones overlapping a reused role
-	// to the right so an extra screen remains reachable instead of hidden.
+	// Unassigned outputs stay live. Outputs made independent by mirror repair
+	// also need their own space, even when assigned a saved role. Preserve all
+	// other mapped geometry and move only overlapping extras/repaired mirrors.
 	for idx := range draft.Outputs {
 		output := &draft.Outputs[idx]
-		if used[output.Key] {
+		if used[output.Key] && !repairedMirrors[output.Key] {
 			continue
 		}
-		warnings = append(warnings, fmt.Sprintf("%s was not assigned a saved role; kept its current settings.", output.Name))
+		if !used[output.Key] {
+			warnings = append(warnings, fmt.Sprintf("%s was not assigned a saved role; kept its current settings.", output.Name))
+		}
 		if output.Enabled && output.MirrorOf == "" && reuseOverlaps(*output, draft.Outputs) {
 			right := output.X
 			for _, other := range draft.Outputs {
@@ -208,7 +215,7 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 			output.X = right
 			warnings = append(warnings, fmt.Sprintf("%s was placed to the right to avoid overlapping the reused layout.", output.Name))
 		}
-		if output.Enabled && output.MirrorOf == "" {
+		if !used[output.Key] && output.Enabled && output.MirrorOf == "" {
 			draft.Workspaces.MonitorOrder = append(draft.Workspaces.MonitorOrder, output.Key)
 		}
 	}

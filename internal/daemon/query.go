@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 )
+
+func applyQueryError(err error) error {
+	if errors.Is(err, apply.ErrQueryTimeout) {
+		return fmt.Errorf("%w: %w", ipc.ErrCompositorBusy, err)
+	}
+	return err
+}
 
 func (s *Service) queryMonitors(ctx context.Context) ([]hypr.Monitor, error) {
 	queryCtx, cancel := context.WithTimeout(ctx, s.cfg.QueryTimeout)

@@ -318,7 +318,7 @@ func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transacti
 	}
 	snapshot, err := s.engine.Apply(ctx, effective, monitors, apply.ApplyModeInteractive)
 	if err != nil {
-		return ipc.Transaction{}, err
+		return ipc.Transaction{}, applyQueryError(err)
 	}
 
 	id, err := transactionID()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,6 +18,72 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
+
+func TestApplyBestBoundsEngineReadsAndCanRetry(t *testing.T) {
+	for _, tc := range []struct {
+		operation string
+		call      int
+	}{
+		{"version", 1},
+		{"version", 2},        // SupportsMonitorV2 performs its own version read.
+		{"workspacerules", 2}, // The daemon's first read succeeds; the engine's stalls.
+		{"workspaces", 1},
+		{"monitors", 2}, // Post-reload validation, after the config has been written.
+	} {
+		t.Run(fmt.Sprintf("%s-%d", tc.operation, tc.call), func(t *testing.T) {
+			env := newApplyBestTestEnvWithMonitors(t, applyBestDualBeforeJSON, applyBestDualBeforeJSON)
+			if err := env.store.Save(profile.FromMonitors("Desk", applyBestDualMonitors())); err != nil {
+				t.Fatal(err)
+			}
+			helper := filepath.Join(filepath.Dir(env.logPath), "hyprctl")
+			source, err := os.ReadFile(helper)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Stall just one selected read. exec replaces the shell so canceled
+			// subprocesses cannot leave a sleep process holding the output pipe.
+			stall := fmt.Sprintf(`
+if [[ "${1-}" == "-j" && "${2-}" == %q ]]; then
+  count=0
+  if [[ -f "$HYPRCTL_LOG.count" ]]; then read -r count < "$HYPRCTL_LOG.count"; fi
+  count=$((count + 1))
+  printf '%%s\n' "$count" > "$HYPRCTL_LOG.count"
+  if [[ "$count" == %d ]]; then exec sleep 20; fi
+fi
+`, tc.operation, tc.call)
+			anchor := `printf '%s\n' "$*" >> "$HYPRCTL_LOG"`
+			if !strings.Contains(string(source), anchor) {
+				t.Fatal("fake compositor script changed")
+			}
+			if err := os.WriteFile(helper, []byte(strings.Replace(string(source), anchor, anchor+stall, 1)), 0755); err != nil {
+				t.Fatal(err)
+			}
+			logs := &logRecorder{}
+			svc := New(env.client, env.store, Config{
+				QueryTimeout: 40 * time.Millisecond,
+				MonitorsConf: env.monitorsConfPath, HyprConfig: env.hyprlandConfigPath, Logf: logs.logf,
+			})
+			before := readMonitorsConf(t, env)
+			started := time.Now()
+			err = svc.applyBest(context.Background())
+			if !errors.Is(err, ipc.ErrCompositorBusy) || time.Since(started) > 500*time.Millisecond {
+				t.Fatalf("engine read was not bounded and retryable: elapsed=%s error=%v", time.Since(started), err)
+			}
+			if readMonitorsConf(t, env) != before {
+				t.Fatal("timed-out apply did not preserve/restore the previous config")
+			}
+			if !logs.contains("apply query operation=") {
+				t.Fatal("failure did not exercise an apply-engine query")
+			}
+			if err := svc.applyBest(context.Background()); err != nil {
+				t.Fatalf("retry after the read recovered: %v", err)
+			}
+			if !logs.contains("applied profile: Desk") {
+				t.Fatal("recovered compositor did not complete the apply")
+			}
+		})
+	}
+}
 
 func TestCompositorQueriesAreBoundedAndLogLatency(t *testing.T) {
 	dir := t.TempDir()

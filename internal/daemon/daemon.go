@@ -158,6 +158,7 @@ func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 		store:  store,
 		engine: apply.Engine{
 			Client:             client,
+			QueryTimeout:       cfg.QueryTimeout,
 			LaptopToggle:       cfg.LaptopToggle,
 			WakeConfig:         cfg.WakeConfig,
 			MonitorsConfPath:   cfg.MonitorsConf,
@@ -761,7 +762,7 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 
 	snapshot, err := s.engine.Apply(ctx, effective, monitors)
 	if err != nil {
-		return err
+		return applyQueryError(err)
 	}
 	if toggleChanged {
 		if err := profileio.SaveWithSidecars(s.store, target); err != nil {

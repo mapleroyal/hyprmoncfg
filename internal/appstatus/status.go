@@ -277,7 +277,7 @@ func Build(version string, daemonRunning bool, profiles []profile.Profile, monit
 	}
 
 	recommendedName := ""
-	if recommended, score, ok := profile.BestMatch(profiles, monitors); ok {
+	if recommended, score, ok := profile.BestAutomaticMatch(profiles, monitors); ok {
 		recommendedName = recommended.Name
 		document.RecommendedProfile = &ProfileMatch{Name: recommended.Name, Score: score}
 	}

@@ -122,7 +122,7 @@ func (m Model) profileMatchSummaries() []profileMatchSummary {
 		activeName = active.Name
 	}
 	recommendedName := ""
-	if best, _, ok := profile.BestMatch(m.profiles, m.monitors); ok {
+	if best, _, ok := profile.BestAutomaticMatch(m.profiles, m.monitors); ok {
 		recommendedName = best.Name
 	}
 

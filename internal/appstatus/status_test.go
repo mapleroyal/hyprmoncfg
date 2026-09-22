@@ -136,6 +136,29 @@ func TestBuildMarksProfilesWithoutConnectedEnabledOutputs(t *testing.T) {
 	}
 }
 
+func TestBuildRecommendationRejectsUnfamiliarDisplaysButHonorsKnownDisabledOnes(t *testing.T) {
+	laptop := hypr.Monitor{Name: "eDP-1", Make: "Example", Model: "Laptop"}
+	desk := hypr.Monitor{Name: "DP-1", Make: "Example", Model: "Desk"}
+	monitors := []hypr.Monitor{laptop, desk}
+	for _, known := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unfamiliar", true: "known-disabled"}[known], func(t *testing.T) {
+			savedMonitors := []hypr.Monitor{laptop}
+			if known {
+				desk.Disabled = true
+				savedMonitors = append(savedMonitors, desk)
+			}
+			saved := profile.FromMonitors("Laptop", savedMonitors)
+			document := Build("test", true, []profile.Profile{saved}, monitors, nil)
+			if document.Profiles[0].MatchScore <= 0 {
+				t.Fatal("fixture must remain a positive hardware match")
+			}
+			if document.Profiles[0].Recommended != known || (document.RecommendedProfile != nil) != known {
+				t.Fatalf("recommendation disagrees with automatic selection: %+v", document)
+			}
+		})
+	}
+}
+
 func TestBuildUsesStableEmptyCollectionsAndNullMatches(t *testing.T) {
 	document := Build("dev", false, nil, nil, nil)
 

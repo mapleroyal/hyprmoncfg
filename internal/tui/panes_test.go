@@ -348,6 +348,21 @@ func TestLoadLiveStateFallsBackToTheHighestScoringProfile(t *testing.T) {
 	}
 }
 
+func TestProfileRecommendationExcludesUnfamiliarConnectedDisplays(t *testing.T) {
+	saved := profile.FromMonitors("Laptop", []hypr.Monitor{paneTestLaptop})
+	m := Model{profiles: []profile.Profile{saved}, monitors: []hypr.Monitor{paneTestLaptop, paneTestDesk}}
+	summaries := m.profileMatchSummaries()
+	if !summaries[0].matches() || summaries[0].recommended {
+		t.Fatalf("partial match must remain selectable without an automatic recommendation: %+v", summaries[0])
+	}
+
+	// Removing the unfamiliar display permits the ordinary undocked fallback.
+	m.monitors = []hypr.Monitor{paneTestLaptop}
+	if summaries = m.profileMatchSummaries(); !summaries[0].recommended {
+		t.Fatalf("known laptop was not recommended after undocking: %+v", summaries[0])
+	}
+}
+
 func TestBusyDaemonIsNotReportedAsStopped(t *testing.T) {
 	m := Model{styles: newStyles(), daemonOK: true, profileOverride: "Desk Solo"}
 
