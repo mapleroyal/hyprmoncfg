@@ -396,12 +396,23 @@ func (s *Service) Run(ctx context.Context) error {
 				s.clearManualOverride()
 				reason := "lid:" + string(state)
 				if state == lid.Open {
+					// Waking changes DPMS state. Older probes must not put the
+					// sleep guard back to sleep and cancel this reconciliation.
+					probeGeneration++
+					pending = false
+					stopDebounce()
 					// Opening the lid is an explicit ask for light. Wake the
 					// displays instead of waiting for a keypress to do it.
 					s.wakeDisplays(ctx)
 					if displayGuard.sleeping {
 						displayGuard.sleeping = false
 						settlingAfterWake = true
+					}
+					if topologyProbePending {
+						// The invalidated hotplug still needs a fresh probe;
+						// keep that obligation before starting its debounce.
+						requestProbe(reason)
+						continue
 					}
 				}
 				if displayGuard.sleeping {
