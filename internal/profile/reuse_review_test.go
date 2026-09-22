@@ -1,6 +1,8 @@
 package profile
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,5 +64,64 @@ func TestReuseRejectsUnchangedOverlappingMappedLayout(t *testing.T) {
 	saved.Outputs[1].X = saved.Outputs[0].X
 	if _, _, err := ReuseLayout(saved, nil, monitors, nil, mapping); err == nil || !strings.Contains(err.Error(), "layout overlaps") {
 		t.Fatalf("returned an invalid unchanged layout as a usable draft: %v", err)
+	}
+}
+
+func TestReusePreservesGeneratedWorkspaceOrderBeforeAddingLiveDisplays(t *testing.T) {
+	for _, strategy := range []WorkspaceStrategy{WorkspaceStrategySequential, WorkspaceStrategyInterleave} {
+		for _, order := range []string{"explicit", "rules", "implicit"} {
+			for _, extra := range []bool{false, true} {
+				for _, skip := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/%s/extra=%t/skip=%t", strategy, order, extra, skip), func(t *testing.T) {
+						saved, monitors, mapping := reuseFixture()
+						saved.Workspaces.Strategy = strategy
+						saved.Workspaces.MaxWorkspaces, saved.Workspaces.GroupSize = 12, 2
+						switch order {
+						case "explicit":
+							saved.Workspaces.MonitorOrder = []string{saved.Outputs[1].Key, saved.Outputs[0].Key}
+						case "rules":
+							saved.Workspaces.MonitorOrder = nil
+							saved.Workspaces.Rules[0], saved.Workspaces.Rules[1] = saved.Workspaces.Rules[1], saved.Workspaces.Rules[0]
+						case "implicit":
+							saved.Workspaces.MonitorOrder = nil
+							saved.Workspaces.Rules = nil
+						}
+						if !extra {
+							monitors = monitors[:2]
+						}
+						if skip {
+							mapping[saved.Outputs[0].Key] = ""
+						}
+						before := cloneForReuse(saved)
+						var want []string
+						seen := map[string]bool{}
+						for _, rule := range ResolveWorkspaceRules(saved, nil) {
+							if target := mapping[rule.OutputKey]; target != "" && !seen[target] {
+								want = append(want, target)
+								seen[target] = true
+							}
+						}
+						draft, _, err := ReuseLayout(saved, nil, monitors, nil, mapping)
+						if err != nil {
+							t.Fatal(err)
+						}
+						var got []string
+						seen = map[string]bool{}
+						for _, rule := range ResolveWorkspaceRules(draft, nil) {
+							if !seen[rule.OutputKey] {
+								got = append(got, rule.OutputKey)
+								seen[rule.OutputKey] = true
+							}
+						}
+						if len(got) != len(monitors) || len(got) < len(want) || !reflect.DeepEqual(got[:len(want)], want) {
+							t.Fatalf("mapped workspace order must precede unassigned displays: got %v, want prefix %v", got, want)
+						}
+						if !reflect.DeepEqual(saved, before) {
+							t.Fatal("template was mutated")
+						}
+					})
+				}
+			}
+		}
 	}
 }

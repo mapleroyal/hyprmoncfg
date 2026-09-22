@@ -153,7 +153,13 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 	settings := saved.Workspaces
 	settings.MonitorOrder = nil
 	settings.Rules = nil
-	for _, key := range saved.Workspaces.MonitorOrder {
+	order := saved.Workspaces.MonitorOrder
+	if settings.Strategy == WorkspaceStrategySequential || settings.Strategy == WorkspaceStrategyInterleave {
+		// Resolve implicit/rule-derived order on the saved identities before
+		// replacing their keys or appending unassigned current displays.
+		order = orderedOutputKeys(saved, nil)
+	}
+	for _, key := range order {
 		if target := mapping[key]; target != "" {
 			settings.MonitorOrder = append(settings.MonitorOrder, target)
 		}
