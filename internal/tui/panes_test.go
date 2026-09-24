@@ -168,7 +168,7 @@ func TestLayoutCanvasNamesDisplaysItCannotDraw(t *testing.T) {
 	m := paneTestModel(t, tabLayout, []hypr.Monitor{paneTestDesk, off, mirror}, nil)
 	view := ansi.Strip(m.renderMain())
 
-	requireContains(t, view, "Off: eDP-1", "Mirrored: DP-2 → DP-1")
+	requireContains(t, view, "eDP-1  Off", "[Enable]", "DP-2  Mirrors DP-1")
 }
 
 func TestWorkspacePreviewDrawsPlanOnMonitorLayout(t *testing.T) {
@@ -295,7 +295,7 @@ func TestEveryTabUsesTheSameAdaptiveMonitorCardVocabulary(t *testing.T) {
 	}
 
 	requireContains(t, strings.Join(expected, "\n"),
-		"DP-1", "Microstep MPG321UR-QD", "3840x2160@143.99Hz", "pos 10,20", "1, 2, 3, 4")
+		"DP-1", "Microstep MPG321UR-QD", "3840x2160@144Hz", "Position 10,20", "1, 2, 3, 4")
 
 	compact := m.monitorCardLines(output, []string{"1", "2", "3", "4"}, monitorCardLayout,
 		3, 40, colors, "", m.styles.palette.warning)
@@ -348,15 +348,19 @@ func TestLoadLiveStateFallsBackToTheHighestScoringProfile(t *testing.T) {
 	}
 }
 
-func TestProfileRecommendationExcludesUnfamiliarConnectedDisplays(t *testing.T) {
+func TestProfileRecommendationIncludesPartialBasesAndExplicitStrictProfiles(t *testing.T) {
 	saved := profile.FromMonitors("Laptop", []hypr.Monitor{paneTestLaptop})
 	m := Model{profiles: []profile.Profile{saved}, monitors: []hypr.Monitor{paneTestLaptop, paneTestDesk}}
 	summaries := m.profileMatchSummaries()
-	if !summaries[0].matches() || summaries[0].recommended {
-		t.Fatalf("partial match must remain selectable without an automatic recommendation: %+v", summaries[0])
+	if !summaries[0].matches() || !summaries[0].recommended || summaries[0].active {
+		t.Fatalf("partial match must recommend the extension base without claiming it is active: %+v", summaries[0])
+	}
+	m.profiles[0].DisableUnknownOutputs = true
+	if summaries = m.profileMatchSummaries(); !summaries[0].recommended || summaries[0].active {
+		t.Fatalf("explicit strict profile must remain a recommendation: %+v", summaries[0])
 	}
 
-	// Removing the unfamiliar display permits the ordinary undocked fallback.
+	// Removing the unfamiliar display retains the ordinary undocked fallback.
 	m.monitors = []hypr.Monitor{paneTestLaptop}
 	if summaries = m.profileMatchSummaries(); !summaries[0].recommended {
 		t.Fatalf("known laptop was not recommended after undocking: %+v", summaries[0])

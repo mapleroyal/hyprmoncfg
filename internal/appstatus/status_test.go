@@ -136,24 +136,29 @@ func TestBuildMarksProfilesWithoutConnectedEnabledOutputs(t *testing.T) {
 	}
 }
 
-func TestBuildRecommendationRejectsUnfamiliarDisplaysButHonorsKnownDisabledOnes(t *testing.T) {
+func TestBuildRecommendsPartialBasesAndExplicitDisplayPolicies(t *testing.T) {
 	laptop := hypr.Monitor{Name: "eDP-1", Make: "Example", Model: "Laptop"}
 	desk := hypr.Monitor{Name: "DP-1", Make: "Example", Model: "Desk"}
 	monitors := []hypr.Monitor{laptop, desk}
-	for _, known := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unfamiliar", true: "known-disabled"}[known], func(t *testing.T) {
+	for _, policy := range []string{"extend", "strict", "known-disabled"} {
+		t.Run(policy, func(t *testing.T) {
 			savedMonitors := []hypr.Monitor{laptop}
-			if known {
-				desk.Disabled = true
-				savedMonitors = append(savedMonitors, desk)
+			if policy == "known-disabled" {
+				disabled := desk
+				disabled.Disabled = true
+				savedMonitors = append(savedMonitors, disabled)
 			}
 			saved := profile.FromMonitors("Laptop", savedMonitors)
+			saved.DisableUnknownOutputs = policy == "strict"
 			document := Build("test", true, []profile.Profile{saved}, monitors, nil)
 			if document.Profiles[0].MatchScore <= 0 {
 				t.Fatal("fixture must remain a positive hardware match")
 			}
-			if document.Profiles[0].Recommended != known || (document.RecommendedProfile != nil) != known {
+			if !document.Profiles[0].Recommended || document.RecommendedProfile == nil || document.RecommendedProfile.Name != saved.Name {
 				t.Fatalf("recommendation disagrees with automatic selection: %+v", document)
+			}
+			if document.ActiveProfile != nil {
+				t.Fatalf("recommended base was mistaken for the current saved state: %+v", document.ActiveProfile)
 			}
 		})
 	}

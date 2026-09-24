@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"context"
-	"os"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -10,26 +10,29 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
-func TestApplyBestDoesNotDisableUnfamiliarConnectedDisplays(t *testing.T) {
-	env := newApplyBestTestEnvWithMonitors(t, applyBestDualBeforeJSON, applyBestDualBeforeJSON)
-	laptop := applyBestDualMonitors()[0]
-	otherSite := hypr.Monitor{Name: "DP-9", Make: "Other", Model: "Projector", Width: 1920, Height: 1080, Scale: 1}
-	if err := env.store.Save(profile.FromMonitors("Other location", []hypr.Monitor{laptop, otherSite})); err != nil {
+func TestApplyBestPreservesExplicitStrictPolicy(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "eDP-1", Make: "Example", Model: "Laptop", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, DPMSStatus: true},
+		{Name: "DP-1", Make: "Example", Model: "New display", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, X: 1920, DPMSStatus: true},
+	}
+	saved := profile.FromMonitors("Strict laptop", monitors[:1])
+	saved.DisableUnknownOutputs = true
+	before, _ := json.Marshal(monitors)
+	monitors[1].Disabled = true
+	after, _ := json.Marshal(monitors)
+	env := newApplyBestTestEnvWithMonitors(t, string(before), string(after))
+	if err := env.store.Save(saved); err != nil {
 		t.Fatal(err)
 	}
-	before := readMonitorsConf(t, env)
 	svc := New(env.client, env.store, Config{MonitorsConf: env.monitorsConfPath, HyprConfig: env.hyprlandConfigPath})
 	if err := svc.applyBest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if after := readMonitorsConf(t, env); after != before {
-		t.Fatalf("unfamiliar displays must leave generated config unchanged:\n%s", after)
+	if rendered := readMonitorsConf(t, env); !strings.Contains(rendered, "disable") {
+		t.Fatalf("explicit strict profile was extended instead: %s", rendered)
 	}
-	log, err := os.ReadFile(env.logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(log), "reload") {
-		t.Fatalf("unfamiliar displays must not trigger a reload:\n%s", log)
+	stored, err := env.store.Load(saved.Name)
+	if err != nil || !stored.DisableUnknownOutputs || len(stored.Outputs) != 1 {
+		t.Fatalf("strict saved profile was changed: %+v (%v)", stored, err)
 	}
 }

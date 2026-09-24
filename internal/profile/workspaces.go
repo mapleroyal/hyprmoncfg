@@ -62,7 +62,8 @@ func WorkspaceSettingsFromHypr(monitors []hypr.Monitor, rules []hypr.WorkspaceRu
 	if inferred, ok := inferGeneratedWorkspaceSettings(settings.Rules); ok {
 		inferred.Enabled = settings.Enabled
 		inferred.Rules = settings.Rules
-		inferred.MonitorOrder = append([]string(nil), settings.MonitorOrder...)
+		// The inferred order reproduces the live assignments; physical monitor
+		// order may differ after the user reorders the workspace planner.
 		return inferred
 	}
 
@@ -162,6 +163,7 @@ func generatedWorkspaceRules(p Profile, monitors []hypr.Monitor, interleave bool
 			Workspace:  strconv.Itoa(idx),
 			OutputKey:  key,
 			OutputName: output.Name,
+			Persistent: settings.PersistAll,
 		}
 		if !seenDefault[key] {
 			rule.Default = true
@@ -181,8 +183,12 @@ func inferGeneratedWorkspaceSettings(rules []WorkspaceRule) (WorkspaceSettings, 
 	outputs := make([]OutputConfig, 0, len(rules))
 	order := make([]string, 0, len(rules))
 	seenOutputs := make(map[string]bool, len(rules))
+	persistAll := true
+	hasNonDefault := false
 
 	for idx, rule := range rules {
+		persistAll = persistAll && rule.Persistent
+		hasNonDefault = hasNonDefault || !rule.Default
 		workspaceID, err := strconv.Atoi(rule.Workspace)
 		if err != nil || workspaceID != idx+1 {
 			return WorkspaceSettings{}, false
@@ -209,11 +215,24 @@ func inferGeneratedWorkspaceSettings(rules []WorkspaceRule) (WorkspaceSettings, 
 	}
 
 	interleaveSettings := WorkspaceSettings{
+		PersistAll:    persistAll && hasNonDefault,
 		Enabled:       true,
 		Strategy:      WorkspaceStrategyInterleave,
 		MaxWorkspaces: len(rules),
 		GroupSize:     1,
 		MonitorOrder:  append([]string(nil), order...),
+	}
+	// One display cannot distinguish round-robin from grouped assignments.
+	// Prefer the default grouped plan so importing a solo setup does not
+	// unexpectedly alternate workspaces when another display is connected.
+	// Exact saved profiles retain their explicit strategy in EditorProfileFromState.
+	if len(outputs) == 1 {
+		sequentialSettings := interleaveSettings
+		sequentialSettings.Strategy = WorkspaceStrategySequential
+		sequentialSettings.GroupSize = 3
+		if rulesMatchGeneratedRules(rules, outputs, sequentialSettings, false) {
+			return sequentialSettings, true
+		}
 	}
 	if rulesMatchGeneratedRules(rules, outputs, interleaveSettings, true) {
 		return interleaveSettings, true
@@ -221,6 +240,7 @@ func inferGeneratedWorkspaceSettings(rules []WorkspaceRule) (WorkspaceSettings, 
 
 	for groupSize := 1; groupSize <= len(rules); groupSize++ {
 		sequentialSettings := WorkspaceSettings{
+			PersistAll:    persistAll && hasNonDefault,
 			Enabled:       true,
 			Strategy:      WorkspaceStrategySequential,
 			MaxWorkspaces: len(rules),
@@ -239,6 +259,7 @@ func rulesMatchGeneratedRules(rules []WorkspaceRule, outputs []OutputConfig, set
 	profileView := Profile{
 		Outputs: outputs,
 		Workspaces: WorkspaceSettings{
+			PersistAll:    settings.PersistAll,
 			Enabled:       true,
 			Strategy:      settings.Strategy,
 			MaxWorkspaces: settings.MaxWorkspaces,

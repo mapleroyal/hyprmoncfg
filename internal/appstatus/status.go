@@ -120,6 +120,8 @@ type MonitorSummary struct {
 	Internal      bool    `json:"internal"`
 	Focused       bool    `json:"focused"`
 	Enabled       bool    `json:"enabled"`
+	Usable        bool    `json:"usable"`
+	Health        string  `json:"health"`
 	// MirrorOf names the connector this monitor mirrors, empty when it drives
 	// its own image. A mirroring monitor shares the position of its source, so
 	// anything drawing a layout has to leave it out and name it separately.
@@ -131,15 +133,16 @@ type MonitorSummary struct {
 // anything changes; mode lists and a complete profile-shaped draft are only
 // fetched when an editor is actually open.
 type EditorDocument struct {
-	MonitorSetHash        string                     `json:"monitor_set_hash,omitempty"`
-	Capabilities          []string                   `json:"capabilities,omitempty"`
-	Profile               profile.Profile            `json:"profile"`
-	Profiles              []profile.Profile          `json:"profiles"`
-	Displays              []EditorDisplay            `json:"displays"`
-	WorkspacePlan         []WorkspacePlan            `json:"workspace_plan"`
-	ProfileWorkspacePlans map[string][]WorkspacePlan `json:"profile_workspace_plans"`
-	SourceProfile         string                     `json:"source_profile,omitempty"`
-	SuggestedProfile      string                     `json:"suggested_profile,omitempty"`
+	MonitorSetHash                string                     `json:"monitor_set_hash,omitempty"`
+	Capabilities                  []string                   `json:"capabilities,omitempty"`
+	WorkspacePersistenceSupported bool                       `json:"workspace_persistence_supported"`
+	Profile                       profile.Profile            `json:"profile"`
+	Profiles                      []profile.Profile          `json:"profiles"`
+	Displays                      []EditorDisplay            `json:"displays"`
+	WorkspacePlan                 []WorkspacePlan            `json:"workspace_plan"`
+	ProfileWorkspacePlans         map[string][]WorkspacePlan `json:"profile_workspace_plans"`
+	SourceProfile                 string                     `json:"source_profile,omitempty"`
+	SuggestedProfile              string                     `json:"suggested_profile,omitempty"`
 }
 
 type EditorDraft struct {
@@ -175,14 +178,15 @@ type EditorDisplay struct {
 func BuildEditor(profiles []profile.Profile, monitors []hypr.Monitor, rules []hypr.WorkspaceRule) EditorDocument {
 	draft, sourceName, suggestedName := profile.EditorProfileFromState(profiles, monitors, rules)
 	document := EditorDocument{
-		MonitorSetHash:        HardwareSnapshotHash(monitors),
-		Profile:               draft,
-		Profiles:              append([]profile.Profile{}, profiles...),
-		Displays:              make([]EditorDisplay, 0, len(monitors)),
-		WorkspacePlan:         BuildEditorDraft(draft).WorkspacePlan,
-		ProfileWorkspacePlans: make(map[string][]WorkspacePlan, len(profiles)),
-		SourceProfile:         sourceName,
-		SuggestedProfile:      suggestedName,
+		MonitorSetHash:                HardwareSnapshotHash(monitors),
+		WorkspacePersistenceSupported: true,
+		Profile:                       draft,
+		Profiles:                      append([]profile.Profile{}, profiles...),
+		Displays:                      make([]EditorDisplay, 0, len(monitors)),
+		WorkspacePlan:                 BuildEditorDraft(draft).WorkspacePlan,
+		ProfileWorkspacePlans:         make(map[string][]WorkspacePlan, len(profiles)),
+		SourceProfile:                 sourceName,
+		SuggestedProfile:              suggestedName,
 	}
 	for _, saved := range profiles {
 		document.ProfileWorkspacePlans[saved.Name] = BuildEditorDraft(saved).WorkspacePlan
@@ -277,7 +281,7 @@ func Build(version string, daemonRunning bool, profiles []profile.Profile, monit
 	}
 
 	recommendedName := ""
-	if recommended, score, ok := profile.BestAutomaticMatch(profiles, monitors); ok {
+	if recommended, score, ok := profile.BestMatch(profiles, monitors); ok {
 		recommendedName = recommended.Name
 		document.RecommendedProfile = &ProfileMatch{Name: recommended.Name, Score: score}
 	}
@@ -329,6 +333,8 @@ func Build(version string, daemonRunning bool, profiles []profile.Profile, monit
 			Internal:      monitor.IsInternal(),
 			Focused:       monitor.Focused,
 			Enabled:       !monitor.Disabled,
+			Usable:        !monitor.Disabled && monitor.DPMSStatus && monitor.Width > 0 && monitor.Height > 0 && monitor.Name != "FALLBACK",
+			Health:        monitorHealth(monitor),
 			MirrorOf:      monitor.MirrorOf,
 		})
 	}

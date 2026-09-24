@@ -21,15 +21,19 @@ import (
 )
 
 type Config struct {
-	Debounce        time.Duration
-	WakeSettle      time.Duration
-	PollInterval    time.Duration
-	LidPollInterval time.Duration
-	EventRetry      time.Duration
-	QueryTimeout    time.Duration
-	ForcedProfile   string
-	MonitorsConf    string
-	HyprConfig      string
+	PowerAwareRefresh   bool
+	ReadBatteryState    func() (battery bool, known bool)
+	Debounce            time.Duration
+	WakeSettle          time.Duration
+	PollInterval        time.Duration
+	LidPollInterval     time.Duration
+	EventRetry          time.Duration
+	RecoveryInterval    time.Duration
+	RecoveryMaxInterval time.Duration
+	QueryTimeout        time.Duration
+	ForcedProfile       string
+	MonitorsConf        string
+	HyprConfig          string
 	// ConfigDir is where the managed/unmanaged choice is recorded, so it
 	// outlives a daemon restart. Empty means always managed.
 	ConfigDir string
@@ -69,6 +73,7 @@ type Service struct {
 }
 
 var errDisplaysSleeping = errors.New("displays are sleeping")
+var errPreviewActive = errors.New("interactive preview is active")
 
 type displaySleepTransition uint8
 
@@ -146,6 +151,12 @@ func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 	}
 	if cfg.EventRetry <= 0 {
 		cfg.EventRetry = 5 * time.Second
+	}
+	if cfg.RecoveryInterval <= 0 {
+		cfg.RecoveryInterval = 2 * time.Second
+	}
+	if cfg.RecoveryMaxInterval < cfg.RecoveryInterval {
+		cfg.RecoveryMaxInterval = max(30*time.Second, cfg.RecoveryInterval)
 	}
 	if cfg.QueryTimeout <= 0 {
 		cfg.QueryTimeout = 750 * time.Millisecond
@@ -275,6 +286,26 @@ func (s *Service) Run(ctx context.Context) error {
 
 	pollTicker := time.NewTicker(s.cfg.PollInterval)
 	defer pollTicker.Stop()
+	recoveryTimer := time.NewTimer(time.Hour)
+	recoveryTimer.Stop()
+	defer recoveryTimer.Stop()
+	var recoveryCh <-chan time.Time
+	var lastBattery, lastPowerKnown bool
+	recoveryDelay := s.cfg.RecoveryInterval
+	stopRecovery := func() {
+		recoveryTimer.Stop()
+		recoveryCh = nil
+		recoveryDelay = s.cfg.RecoveryInterval
+	}
+	scheduleRecovery := func() {
+		if recoveryCh != nil {
+			return
+		}
+		s.cfg.Logf("display apply will retry in %s", recoveryDelay)
+		recoveryTimer.Reset(recoveryDelay)
+		recoveryCh = recoveryTimer.C
+		recoveryDelay = min(s.cfg.RecoveryMaxInterval, recoveryDelay*2)
+	}
 
 	debounceTimer := time.NewTimer(s.cfg.Debounce)
 	if !debounceTimer.Stop() {
@@ -295,6 +326,7 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 	}
 	deferForDisplaySleep := func(reason string) {
+		stopRecovery()
 		s.cfg.LaptopToggle.Reset()
 		pending = true
 		settlingAfterWake = false
@@ -315,6 +347,20 @@ func (s *Service) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-recoveryCh:
+			recoveryCh = nil
+			if !config.IsManaged(s.cfg.ConfigDir) || displayGuard.sleeping || systemSuspended {
+				stopRecovery()
+				continue
+			}
+			s.pendingMu.Lock()
+			previewing := s.pending != nil
+			s.pendingMu.Unlock()
+			if previewing {
+				scheduleRecovery()
+				continue
+			}
+			pushTrigger("display-recovery", s.cfg.Debounce)
 		case err, ok := <-eventErrs:
 			if !ok {
 				eventErrs = nil
@@ -332,6 +378,9 @@ func (s *Service) Run(ctx context.Context) error {
 				if eventErrs == nil {
 					scheduleEventRetry()
 				}
+				continue
+			}
+			if systemSuspended {
 				continue
 			}
 			reason := string(ev.Type) + ":" + ev.Value
@@ -366,6 +415,7 @@ func (s *Service) Run(ctx context.Context) error {
 			systemSuspended = sleeping
 			topologyProbePending = false
 			if sleeping {
+				stopRecovery()
 				s.cfg.LaptopToggle.Reset()
 				// A lid close that suspends the machine must not be applied on
 				// resume: by then the lid is usually open again, and honoring
@@ -388,6 +438,9 @@ func (s *Service) Run(ctx context.Context) error {
 		case state, ok := <-lidStates:
 			if !ok {
 				lidStates = nil
+				continue
+			}
+			if systemSuspended {
 				continue
 			}
 			if state != s.lidState {
@@ -430,6 +483,16 @@ func (s *Service) Run(ctx context.Context) error {
 				s.cfg.Logf("lid state unavailable: %v", err)
 			}
 		case <-pollTicker.C:
+			if systemSuspended {
+				continue
+			}
+			if s.cfg.PowerAwareRefresh {
+				battery, known := s.batteryState()
+				if known && (!lastPowerKnown || battery != lastBattery) {
+					scheduleMonitorTrigger("power-source")
+				}
+				lastBattery, lastPowerKnown = battery, known
+			}
 			if !systemSuspended {
 				requestProbe("poll")
 			}
@@ -517,6 +580,11 @@ func (s *Service) Run(ctx context.Context) error {
 				debounceTimer.Reset(s.cfg.Debounce)
 				continue
 			}
+			if errors.Is(err, errPreviewActive) {
+				pending = false
+				scheduleRecovery()
+				continue
+			}
 			if errors.Is(err, errDisplaysSleeping) {
 				if displayGuard.MarkSleeping() {
 					s.cfg.Logf("display sleep detected; pausing automatic switching")
@@ -528,6 +596,9 @@ func (s *Service) Run(ctx context.Context) error {
 			settlingAfterWake = false
 			if err != nil {
 				s.cfg.Logf("apply failed: %v", err)
+				scheduleRecovery()
+			} else {
+				stopRecovery()
 			}
 			s.signalChange()
 		}
@@ -634,6 +705,14 @@ func (s *Service) tryApplyBest(ctx context.Context) error {
 }
 
 func (s *Service) applyBest(ctx context.Context) error {
+	err := s.applyAutomatic(ctx)
+	if errors.Is(err, errPreviewActive) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) applyAutomatic(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.applyBestLocked(ctx)
@@ -650,7 +729,7 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 	s.pendingMu.Unlock()
 	if interactive {
 		s.cfg.Logf("automatic switching paused during interactive preview")
-		return nil
+		return errPreviewActive
 	}
 	// Monitor configuration was handed back to Hyprland. Applying anything here
 	// would also put the include back, undoing the hand-back on the next event.
@@ -694,7 +773,7 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 		if err != nil {
 			return err
 		}
-		best, score, ok := profile.BestAutomaticMatch(profiles, monitors)
+		best, score, ok := profile.BestMatch(profiles, monitors)
 		// Keep a recognized setup stable until its hardware or lid changes.
 		// A transient wake layout must not select a different saved profile.
 		if s.lastMonitorSet == monitorSet && s.lastLidState == s.lidState {
@@ -723,8 +802,8 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 				s.cfg.Logf("no matching profile for monitor set %s; enabling internal output", hash)
 				target = fallback
 			} else {
-				s.cfg.Logf("unfamiliar display setup: no automatic profile; connected=%d elapsed=%s", len(monitors), time.Since(started).Round(time.Millisecond))
-				return nil
+				s.cfg.Logf("no matching profile for monitor set %s", hash)
+				target = profile.ExtendConnected(profile.Profile{Name: "draft"}, monitors)
 			}
 		} else {
 			if s.lidState.Known() {
@@ -761,9 +840,14 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 		}
 	}
 
-	effective := target
+	effective := profile.ExtendConnected(target, monitors)
+	if s.cfg.PowerAwareRefresh && !manualHold && !toggleChanged {
+		if battery, known := s.batteryState(); known {
+			effective = profile.WithPowerRefresh(effective, monitors, battery)
+		}
+	}
 	if s.lidState == lid.Closed {
-		adjusted, adjustment := profile.ApplyClosedLidPolicy(target, monitors)
+		adjusted, adjustment := profile.ApplyClosedLidPolicy(effective, monitors)
 		effective = adjusted
 		if adjustment.Applied {
 			disabled := strings.Join(adjustment.DisabledOutputNames, ",")

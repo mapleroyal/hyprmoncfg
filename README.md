@@ -8,6 +8,10 @@
 <strong>Create multi-monitor layouts for Hyprland.</strong><br>
 Arrange visually. Save each setup. Switch automatically on hotplug and lid events.
 
+Version 1.19 aligns display summaries and profile-command wording
+with the Omarchy panel. See the [TUI guide](docs/_guide/tui.md) for hardware details
+and the [shared design](DESIGN.md) for accepted presentation conventions and scope.
+
 [![GitHub Release](https://img.shields.io/github/v/release/crmne/hyprmoncfg)](https://github.com/crmne/hyprmoncfg/releases)
 [![AUR](https://img.shields.io/aur/version/hyprmoncfg)](https://aur.archlinux.org/packages/hyprmoncfg)
 [![CI](https://github.com/crmne/hyprmoncfg/actions/workflows/ci.yml/badge.svg)](https://github.com/crmne/hyprmoncfg/actions/workflows/ci.yml)
@@ -23,15 +27,26 @@ Arrange visually. Save each setup. Switch automatically on hotplug and lid event
 
 </div>
 
+Version 1.19 adds independent failed-apply retries, per-output health,
+bounded display discovery, visible small-terminal footer actions, workspace
+persistence choices in both editors, and opt-in `hyprmoncfgd --power-aware-refresh`
+for internal laptop panels. See the [release notes](docs/releases/1.19.0.md) and
+daemon guide for highlights, limits, and defaults.
+
 ---
 
 hyprmoncfg is a visual multi-monitor layout editor and automatic profile switcher for Hyprland. Drag displays into place, save each setup as a hardware-aware profile, and let the daemon apply the right one when monitors or your laptop lid change.
 
-![hyprmoncfg demo](docs/assets/images/demo.gif)
+![hyprmoncfg 1.19 layout editor](docs/assets/images/screenshots/layout-dark.png)
+
+Actual TUI capture with synthetic display/profile data. See the
+[screenshot gallery](https://hyprmoncfg.dev/what-is-hyprmoncfg/#screenshots) for
+both themes, workspace planning, and profiles.
 
 ## What you get
 
 - **Spatial layout editor** -- drag monitors on a canvas and tune mode, scale, VRR, mirror, transform, and exact position
+- **Visible off displays** -- select a separate Off row and enable it in the draft; preview before changing the live layout
 - **Named profiles** -- save setups like `desk`, `conference`, or `home-office`
 - **Explicit layout reuse through editor IPC** -- map a saved layout onto currently connected displays, review the draft, then preview and save it as a new setup
 - **Hardware-identity matching** -- profiles follow monitor make, model, and serial instead of unstable connector names
@@ -94,11 +109,11 @@ install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
 
-[`native-packages.yaml`](native-packages.yaml) declares binary packages and
-downstream repositories; native recipes live in [`packaging/`](packaging/).
-Install the shared CLI with `gem install native-packages --version 0.5.1`, build
-packages with `native-packages build --release v<version>`, and track destinations
-with `native-packages status`. Hyprmoncfg's Go/Nix source recipes use
+[`native-packages.yaml`](native-packages.yaml) declares binary packages, AUR
+recipes, and downstream repositories; native recipes live in [`packaging/`](packaging/).
+Install the shared CLI with `gem install native-packages --version 0.7.0`, build
+packages and AUR recipes with `native-packages build --release v<version>`, and track
+destinations with `native-packages status`. The other distributions' source recipes use
 `ruby scripts/package_sources.rb prepare <version>`.
 See [PACKAGING.md](PACKAGING.md) for staging, publishing, and release automation.
 
@@ -144,9 +159,11 @@ systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
 ```
 
-The daemon scores profiles in `~/.config/hyprmoncfg/profiles/` that account for every connected display, so an unfamiliar monitor is left available for you to configure. Missing saved displays are allowed for undocking. Delete throwaway profiles before relying on automatic switching.
+The daemon scores profiles in `~/.config/hyprmoncfg/profiles/` against the connected displays. A partial match can provide the base for a temporary extended layout without changing the saved profile. Unfamiliar displays are added unless the profile explicitly sets `disable_unknown_outputs: true`; deliberately disabled known displays remain off. Missing saved displays are allowed for undocking. Delete throwaway profiles before relying on automatic switching.
 
 When a dock is still connecting, monitor and workspace reads have short deadlines and desktop clients can show a connecting state while retrying. Unique hardware identities skip DRM connector probing; ambiguous identities use one shared probe with bounded waiting. See [daemon behavior](https://hyprmoncfg.dev/daemon/) and the [editor IPC reference](https://hyprmoncfg.dev/ipc/) for the matching and draft-reuse contracts.
+
+Newly connected displays extend the matching layout to the right, touching its rightmost display. Automatically extended layouts appear as unsaved drafts in the editor and panel; save one to name and reuse it. Workspace planning follows the profile's settings, or defaults to sequential groups of three across nine workspaces when planning was disabled. In the TUI, press `U` to toggle disabling displays outside the profile, then save. The corresponding profile JSON setting is `disable_unknown_outputs` (default `false`). Displays explicitly saved as disabled stay disabled.
 
 On Omarchy versions that launch `omarchy-hyprland-monitor-watch`, `hyprmoncfgd` stops that exact transient user scope while it owns monitor profiles and restores the watcher when the daemon exits during a live Hyprland session. Generated configuration used without the daemon cannot provide this runtime ownership; static-config users must disable the Omarchy watcher separately.
 
@@ -241,6 +258,10 @@ You don't commit the generated `~/.config/hypr/hyprmoncfg-monitors.{conf,lua}`. 
 Full documentation at **[hyprmoncfg.dev](https://hyprmoncfg.dev)**.
 
 ## Development
+
+Read [DESIGN.md](DESIGN.md) for the proposed shared daemon, TUI, and Omarchy-panel
+direction and the [dated baseline review](docs/design-review-2026-09-22.md) for
+release evidence and outstanding work. Proposed capabilities are not shipped features.
 
 Install the pre-commit hook to run CI checks locally before each commit:
 

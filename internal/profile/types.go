@@ -65,17 +65,19 @@ type WorkspaceSettings struct {
 	Strategy      WorkspaceStrategy `json:"strategy,omitempty"`
 	MaxWorkspaces int               `json:"max_workspaces,omitempty"`
 	GroupSize     int               `json:"group_size,omitempty"`
+	PersistAll    bool              `json:"persist_all,omitempty"`
 	MonitorOrder  []string          `json:"monitor_order,omitempty"`
 	Rules         []WorkspaceRule   `json:"rules,omitempty"`
 }
 
 type Profile struct {
-	Name       string            `json:"name"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-	Outputs    []OutputConfig    `json:"outputs"`
-	Workspaces WorkspaceSettings `json:"workspaces,omitempty"`
-	Exec       string            `json:"exec"`
+	DisableUnknownOutputs bool              `json:"disable_unknown_outputs,omitempty"`
+	Name                  string            `json:"name"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
+	Outputs               []OutputConfig    `json:"outputs"`
+	Workspaces            WorkspaceSettings `json:"workspaces,omitempty"`
+	Exec                  string            `json:"exec"`
 }
 
 func New(name string, outputs []OutputConfig) Profile {

@@ -9,6 +9,52 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 )
 
+func TestReuseKeepsTemplateUnknownDisplayPolicy(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		for _, donorKind := range []string{"none", "exact", "best"} {
+			t.Run(fmt.Sprintf("strict=%t/%s", strict, donorKind), func(t *testing.T) {
+				saved, monitors, mapping := reuseFixture()
+				saved.DisableUnknownOutputs = strict
+				before := cloneForReuse(saved)
+				var donors []Profile
+				if donorKind != "none" {
+					donor := FromMonitors("Current", monitors)
+					donor.DisableUnknownOutputs = !strict
+					for i := range donor.Outputs {
+						donor.Outputs[i].ICC = "/current/calibration.icc"
+					}
+					if donorKind == "best" {
+						for i := range donor.Outputs {
+							donor.Outputs[i].Y += 100
+						}
+					}
+					donors = []Profile{donor}
+					if _, exact := ExactStateMatch(donors, monitors, nil); exact != (donorKind == "exact") {
+						t.Fatal("fixture did not select the intended donor recovery path")
+					}
+				}
+				draft, _, err := ReuseLayout(saved, donors, monitors, nil, mapping)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if draft.DisableUnknownOutputs != strict {
+					t.Fatalf("template strict=%t became %t after %s calibration recovery", strict, draft.DisableUnknownOutputs, donorKind)
+				}
+				if donorKind != "none" {
+					for _, output := range draft.Outputs {
+						if output.ICC != "/current/calibration.icc" {
+							t.Fatal("policy preservation lost target calibration")
+						}
+					}
+				}
+				if !reflect.DeepEqual(saved, before) {
+					t.Fatal("template was mutated")
+				}
+			})
+		}
+	}
+}
+
 func TestReuseRepairsAdaptedMappedGeometryAndKeepsMirrorsAligned(t *testing.T) {
 	for _, adaptation := range []string{"mode", "rotated-mode", "scale"} {
 		t.Run(adaptation, func(t *testing.T) {
@@ -64,6 +110,62 @@ func TestReuseRejectsUnchangedOverlappingMappedLayout(t *testing.T) {
 	saved.Outputs[1].X = saved.Outputs[0].X
 	if _, _, err := ReuseLayout(saved, nil, monitors, nil, mapping); err == nil || !strings.Contains(err.Error(), "layout overlaps") {
 		t.Fatalf("returned an invalid unchanged layout as a usable draft: %v", err)
+	}
+}
+
+func TestReuseRejectsSkippedRolesWithoutARealConfiguredDisplay(t *testing.T) {
+	saved := FromMonitors("Template", []hypr.Monitor{{Name: "DP-8", Make: "Example", Model: "Template", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1}})
+	for _, tc := range []struct {
+		name          string
+		connector     string
+		width, height int
+	}{
+		{"modeless", "DP-1", 0, 0},
+		{"zero-width", "DP-1", 0, 1080},
+		{"zero-height", "DP-1", 1920, 0},
+		// The client already filters synthetic heads. Keep the shared helper's
+		// final invariant valid for callers supplying monitor snapshots directly.
+		{"synthetic", " fallback ", 1920, 1080},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			monitors := []hypr.Monitor{{Name: tc.connector, Make: "Example", Model: "Current", Width: tc.width, Height: tc.height, RefreshRate: 60, Scale: 1, DPMSStatus: true}}
+			mapping := map[string]string{saved.Outputs[0].Key: ""}
+			if _, _, err := ReuseLayout(saved, nil, monitors, nil, mapping); err == nil || !strings.Contains(err.Error(), "usable mode") {
+				t.Fatalf("reuse accepted only an unconfigured or synthetic output: %v", err)
+			}
+		})
+	}
+}
+
+func TestReuseAcceptsConfiguredModesForInactiveTargets(t *testing.T) {
+	saved := FromMonitors("Template", []hypr.Monitor{{Name: "DP-8", Make: "Example", Model: "Template", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1}})
+	for _, tc := range []struct {
+		name          string
+		disabled      bool
+		width, height int
+		mode          string
+		wantWidth     int
+		wantHeight    int
+	}{
+		{"disabled-supported-mode", true, 0, 0, "1920x1080@60Hz", 1920, 1080},
+		{"modeless-supported-mode", false, 0, 0, "1920x1080@60Hz", 1920, 1080},
+		{"disabled-fallback-mode", true, 0, 0, "1280x720@60Hz", 1280, 720},
+		{"sleeping-current-mode", false, 1920, 1080, "", 1920, 1080},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			monitor := hypr.Monitor{Name: "DP-1", Make: "Example", Model: "Current", Disabled: tc.disabled, Width: tc.width, Height: tc.height, RefreshRate: 60, Scale: 1, DPMSStatus: false}
+			if tc.mode != "" {
+				monitor.AvailableModes = []string{tc.mode}
+			}
+			draft, _, err := ReuseLayout(saved, nil, []hypr.Monitor{monitor}, nil, map[string]string{saved.Outputs[0].Key: monitor.HardwareKey()})
+			if err != nil {
+				t.Fatalf("reuse rejected a configurable display: %v", err)
+			}
+			output := draft.Outputs[0]
+			if !output.Enabled || output.MirrorOf != "" || output.Width != tc.wantWidth || output.Height != tc.wantHeight {
+				t.Fatalf("draft did not configure an independent display: %+v", output)
+			}
+		})
 	}
 }
 

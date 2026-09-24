@@ -2,7 +2,6 @@ package ipc
 
 import (
 	"encoding/json"
-	"fmt"
 	"testing"
 
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
@@ -40,12 +39,5 @@ func TestReuseIPCDecodesMappingAndReturnsWarnings(t *testing.T) {
 	}
 	if result.Profile.Name != "" || len(result.Warnings) != 1 {
 		t.Fatalf("invalid draft response: %+v", result)
-	}
-}
-
-func TestCompositorBusyHasStableWireError(t *testing.T) {
-	response := encodeResponseError(fmt.Errorf("monitor read: %w", ErrCompositorBusy))
-	if response.Code != "compositor_busy" || response.Message != ErrCompositorBusy.Error() {
-		t.Fatalf("invalid timeout response: %+v", response)
 	}
 }

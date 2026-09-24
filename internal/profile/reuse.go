@@ -59,6 +59,9 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 	} else if best, _, ok := BestMatch(donors, monitors); ok {
 		PreserveUnreportedSettings(&draft, best)
 	}
+	// Calibration belongs to the current hardware; unknown-display policy
+	// belongs to the selected template, even when its donor has another policy.
+	draft.DisableUnknownOutputs = saved.DisableUnknownOutputs
 	for key := range mapping {
 		if _, ok := bySource[key]; !ok {
 			return Profile{}, nil, fmt.Errorf("saved display mapping is stale; reload the selected layout")
@@ -238,14 +241,17 @@ func ReuseLayout(saved Profile, profiles []Profile, monitors []hypr.Monitor, rul
 			output.X, output.Y = source.X, source.Y
 		}
 	}
-	enabled := 0
+	// Validate the configured draft mode, not live DPMS/disabled state: reuse
+	// can enable an inactive display using one of its advertised modes.
+	usable := 0
 	for _, output := range draft.Outputs {
-		if output.Enabled && output.MirrorOf == "" {
-			enabled++
+		if output.Enabled && output.MirrorOf == "" && output.Width > 0 && output.Height > 0 &&
+			!strings.EqualFold(strings.TrimSpace(output.Name), "FALLBACK") {
+			usable++
 		}
 	}
-	if enabled == 0 {
-		return Profile{}, nil, fmt.Errorf("the reused layout must keep at least one independent display enabled")
+	if usable == 0 {
+		return Profile{}, nil, fmt.Errorf("the reused layout must keep at least one real independent display enabled with a usable mode")
 	}
 	draft.Normalize()
 	if err := ValidateLayout(draft.Outputs); err != nil {

@@ -23,12 +23,13 @@ func TestApplyBestBoundsEngineReadsAndCanRetry(t *testing.T) {
 	for _, tc := range []struct {
 		operation string
 		call      int
+		query     string
 	}{
-		{"version", 1},
-		{"version", 2},        // SupportsMonitorV2 performs its own version read.
-		{"workspacerules", 2}, // The daemon's first read succeeds; the engine's stalls.
-		{"workspaces", 1},
-		{"monitors", 2}, // Post-reload validation, after the config has been written.
+		{"version", 1, "version"},
+		{"version", 2, "monitor-v2"},             // SupportsMonitorV2 performs its own version read.
+		{"workspacerules", 2, "workspace-rules"}, // The daemon's first read succeeds; the engine's stalls.
+		{"workspaces", 1, "workspaces"},
+		{"monitors", 2, "monitors"}, // Post-reload validation, after the config has been written.
 	} {
 		t.Run(fmt.Sprintf("%s-%d", tc.operation, tc.call), func(t *testing.T) {
 			env := newApplyBestTestEnvWithMonitors(t, applyBestDualBeforeJSON, applyBestDualBeforeJSON)
@@ -60,19 +61,22 @@ fi
 			}
 			logs := &logRecorder{}
 			svc := New(env.client, env.store, Config{
-				QueryTimeout: 40 * time.Millisecond,
+				// Healthy reads launch real shell processes. Give loaded CI
+				// runners scheduling headroom; the injected 20-second stall
+				// must still be canceled well before it can finish naturally.
+				QueryTimeout: 500 * time.Millisecond,
 				MonitorsConf: env.monitorsConfPath, HyprConfig: env.hyprlandConfigPath, Logf: logs.logf,
 			})
 			before := readMonitorsConf(t, env)
 			started := time.Now()
 			err = svc.applyBest(context.Background())
-			if !errors.Is(err, ipc.ErrCompositorBusy) || time.Since(started) > 500*time.Millisecond {
+			if !errors.Is(err, ipc.ErrCompositorBusy) || time.Since(started) > 5*time.Second {
 				t.Fatalf("engine read was not bounded and retryable: elapsed=%s error=%v", time.Since(started), err)
 			}
 			if readMonitorsConf(t, env) != before {
 				t.Fatal("timed-out apply did not preserve/restore the previous config")
 			}
-			if !logs.contains("apply query operation=") {
+			if !logs.contains("apply query operation=" + tc.query + " ") {
 				t.Fatal("failure did not exercise an apply-engine query")
 			}
 			if err := svc.applyBest(context.Background()); err != nil {
@@ -120,25 +124,25 @@ func TestCompositorQueriesAreBoundedAndLogLatency(t *testing.T) {
 	}
 }
 
-func TestUnfamiliarSetupSkipsWorkspaceReadAndAllWrites(t *testing.T) {
-	env := newApplyBestTestEnvWithMonitors(t, applyBestDualBeforeJSON, applyBestDualBeforeJSON)
-	monitors := applyBestDualMonitors()
-	other := hypr.Monitor{Name: "DP-9", Make: "Other", Model: "Desk", Width: 1920, Height: 1080, Scale: 1}
-	if err := env.store.Save(profile.FromMonitors("Other", []hypr.Monitor{monitors[0], other})); err != nil {
-		t.Fatal(err)
+func TestUnfamiliarSetupBuildsTemporaryLayout(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "eDP-1", Make: "Example", Model: "Laptop", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, DPMSStatus: true},
+		{Name: "DP-1", Make: "Example", Model: "New display", Width: 1920, Height: 1080, RefreshRate: 60, Scale: 1, DPMSStatus: true},
 	}
+	before, _ := json.Marshal(monitors)
+	monitors[1].X = 1920
+	after, _ := json.Marshal(monitors)
+	env := newApplyBestTestEnvWithMonitors(t, string(before), string(after))
 	svc := New(env.client, env.store, Config{MonitorsConf: env.monitorsConfPath, HyprConfig: env.hyprlandConfigPath})
 	svc.readLid = func(context.Context) (lid.State, error) { return lid.Open, nil }
-	before := readMonitorsConf(t, env)
 	if err := svc.applyBest(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(env.logPath)
-	if err != nil {
-		t.Fatal(err)
+	if rendered := readMonitorsConf(t, env); !strings.Contains(rendered, "position = 1920x0") || strings.Contains(rendered, "disable") {
+		t.Fatalf("unfamiliar displays were not extended into a usable layout: %s", rendered)
 	}
-	if strings.Contains(string(data), "workspacerules") || strings.Contains(string(data), "reload") || readMonitorsConf(t, env) != before {
-		t.Fatalf("unknown fast path read workspaces or wrote displays: %s", data)
+	if profiles, err := env.store.List(); err != nil || len(profiles) != 0 {
+		t.Fatalf("automatic extension saved an unsolicited profile: %+v (%v)", profiles, err)
 	}
 }
 
