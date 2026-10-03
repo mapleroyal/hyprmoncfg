@@ -12,12 +12,52 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
+
+func TestApplyValidationDeadlineIsNotCompositorBusy(t *testing.T) {
+	// Healthy reads keep reporting 60Hz after a 144Hz apply. Expiring the
+	// overall attempt must enter recovery backoff, not the short busy retry.
+	before := applyBestDualBeforeJSON
+	env := newApplyBestTestEnvWithMonitors(t, before, before)
+	target := profile.FromMonitors("Desk", applyBestDualMonitors())
+	target.Outputs[1].Refresh = 144
+	target.Outputs[1].Mode = "3840x2160@144Hz"
+	if err := env.store.Save(target); err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(filepath.Dir(env.logPath), "hyprctl")
+	source, err := os.ReadFile(helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := `if [[ "${1-}" == "-j" && "${2-}" == "monitors" && "${3-}" == "all" ]]; then`
+	blocked := strings.Replace(string(source), anchor, anchor+`
+  count=0
+  if [[ -f "$HYPRCTL_LOG.read" ]]; then read -r count < "$HYPRCTL_LOG.read"; fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$HYPRCTL_LOG.read"
+  if [[ "$count" -ge 3 ]]; then exec sleep 20; fi
+`, 1)
+	if err := os.WriteFile(helper, []byte(blocked), 0755); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		QueryTimeout: 2 * time.Second,
+		MonitorsConf: env.monitorsConfPath, HyprConfig: env.hyprlandConfigPath,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	err = svc.applyBest(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ipc.ErrCompositorBusy) || errors.Is(err, apply.ErrQueryTimeout) || !strings.Contains(err.Error(), "refresh mismatch") {
+		t.Fatalf("rejected mode must use failed-apply recovery: %v", err)
+	}
+}
 
 func TestApplyBestBoundsEngineReadsAndCanRetry(t *testing.T) {
 	for _, tc := range []struct {

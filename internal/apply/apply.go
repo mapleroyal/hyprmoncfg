@@ -373,9 +373,21 @@ func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, be
 	defer ticker.Stop()
 
 	var lastErr error
+	validationError := func() error {
+		if lastErr != nil {
+			return fmt.Errorf("%w: %v", ctx.Err(), lastErr)
+		}
+		return ctx.Err()
+	}
 
 	for {
+		if ctx.Err() != nil {
+			return nil, validationError()
+		}
 		applied, err := query(ctx, e, "monitors", e.Client.Monitors)
+		if ctx.Err() != nil {
+			return nil, validationError()
+		}
 		if errors.Is(err, ErrQueryTimeout) {
 			// A stalled read is not a layout mismatch to poll through. Return to
 			// the caller so it can roll back and schedule a fresh reconciliation.
@@ -391,10 +403,7 @@ func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, be
 
 		select {
 		case <-ctx.Done():
-			if lastErr != nil {
-				return nil, fmt.Errorf("%w: %v", ctx.Err(), lastErr)
-			}
-			return nil, ctx.Err()
+			return nil, validationError()
 		case <-ticker.C:
 		}
 	}

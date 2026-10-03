@@ -74,6 +74,10 @@ first. Monitor/workspace discovery queries have a 750ms timeout. This does not
 prove physical projector readiness or recover an all-DPMS-off failed wake which
 cannot yet be distinguished from deliberate sleep.
 
+Expiry of the overall apply-validation deadline remains a failed apply, preserving
+the last reported output mismatch and using recovery backoff. It is not classified
+as a transient busy read when a monitor query inherits that expired deadline.
+
 ### Optional laptop power-aware refresh
 
 Start the daemon with `--power-aware-refresh` to adapt enabled independent
