@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit hook that mirrors CI checks.
+# Pre-commit hook for local Go checks.
 # Install: ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 set -euo pipefail
 

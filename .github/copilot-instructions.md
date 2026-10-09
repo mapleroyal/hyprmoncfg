@@ -107,7 +107,7 @@ ask for before-and-after evidence when the visual or interaction effect is not
 clear from the pull request.
 
 Give concrete findings tied to changed lines. Do not fill a review with style
-comments that `gofmt` or `go vet` already enforce. CI passing is necessary but
-does not prove that config mutation, rollback, hotplug behavior, or a daemon
+comments that `gofmt` or `go vet` already enforce. Passing local checks is necessary
+but does not prove that config mutation, rollback, hotplug behavior, or a daemon
 race is safe. Copilot may identify blockers and request changes, but must never
 approve, merge, or close a pull request.

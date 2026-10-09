@@ -1,7 +1,7 @@
 # Packaging hyprmoncfg
 
 This repository owns the application, shared installation assets, distribution
-recipes, and release automation. Edit packaging here and export the generated
+recipes, and local packaging tools. Edit packaging here and export the generated
 recipes to the distribution's publishing repository.
 
 The [native-packages](https://rubygems.org/gems/native-packages) gem builds binary
@@ -10,6 +10,13 @@ packages, renders the AUR recipes, and handles downstream repositories from
 dependency archive. Hyprmoncfg keeps the generator for the other distributions'
 source recipes in `scripts/package_sources.rb`; it uses the same gem's release
 helpers. No packaging Gemfile or wrapper is needed.
+
+This personal fork builds locally. GitHub Actions does not build packages, deploy
+documentation, publish releases, or push distribution updates. Existing upstream
+release archives remain available. The inherited `.goreleaser.yml` and
+`native-packages.yaml` still describe `crmne/hyprmoncfg` and its upstream publishing
+destinations; use their local build commands with publication disabled. Publishing
+to any destination is a separate, deliberate step with the appropriate credentials.
 
 ## Layout
 
@@ -56,8 +63,8 @@ ruby scripts/package_sources.rb prepare 1.18.3
 
 Requirements: Ruby 3.2+, native-packages 0.7.0, nFPM 2.47.0, Git, curl, `bsdtar`, `readelf`, Go at least
 as new as the release's `go.mod`, Nix (`nix hash path`, without a Nix daemon), and Arch's `makepkg`
-or Docker for AUR metadata. The Packaging GitHub
-Actions workflow provides the required tools if you prefer to run this in CI.
+or Docker for AUR metadata. Install these tools on the machine performing the
+build; there is no hosted Packaging workflow in this fork.
 Install the test dependency and run the application's source-recipe tests with:
 
 ```sh
@@ -162,7 +169,7 @@ native-packages publish aur
 
 This commits and pushes changed recipes to the three independent AUR repositories.
 Use `aur-source`, `aur-bin`, or `aur-git` to target just one package. To stage and
-push a verified build in one step, as release CI does, run
+push a verified build in one deliberate step, run
 `native-packages publish --from dist/packages/1.18.3 --to aur`.
 
 For Nixpkgs, Alpine, or Blackhole, staging writes a submission draft under
@@ -230,38 +237,46 @@ The previous `hyprmoncfg-packaging`, `distro-submissions`, AUR, and distribution
 checkouts were the migration inputs. They can remain as historical workspaces;
 future recipe edits and destination configuration belong here.
 
-## CI
+## Local builds and optional manual publication
 
-Push a stable `vX.Y.Z` tag through the normal release process. GoReleaser publishes
-Linux archives, offline dependencies and `checksums.txt`. The Packaging workflow
-then invokes the pinned native-packages workflow, which builds amd64/arm64 DEB/RPM
-files and the AUR recipes, attaches them to the release, and pushes the AUR
-recipes. In parallel it prepares the other source recipes with the generator,
-and a following release job attaches that archive.
+Run application checks before preparing archives:
 
-`packaging-checksums.txt` covers the binary packages and
-`hyprmoncfg-<version>-packaging.tar.xz` (the AUR recipes);
-`source-packaging-checksums.txt` covers `hyprmoncfg-<version>-source-recipes.tar.xz`.
-The original `checksums.txt` is preserved. No follow-up version commit or AI
-session is needed for packaging updates.
+```sh
+go mod tidy
+git diff --exit-code -- go.mod go.sum
+go test ./...
+go vet ./...
+go build ./cmd/hyprmoncfg ./cmd/hyprmoncfgd
+git diff --check
+```
 
-Packaging changes also run the application generator tests, validate native shell
-recipes, and build/inspect snapshot Debian and RPM packages and AUR recipes in CI.
-The Packaging workflow can be dispatched with a published version to regenerate
-recipes, and with `publish` also checked to attach packages and push the AUR
-recipes for that release. A dispatch replaces the release's native-packages assets
-but not the source-recipe archive.
-These checks do not replace each distribution's native package build and review.
+GoReleaser 2.18.1 can prepare snapshot Linux binary archives, offline dependencies,
+and checksums locally without creating a GitHub release:
 
-To publish AUR packages automatically after releases, configure repository secrets
-`AUR_SSH_KEY` and `AUR_KNOWN_HOSTS`
-(the verified AUR host-key entry), then set repository variable `PUBLISH_AUR=true`.
-Generation and binary package publication work without those credentials.
-Release tags must point to a commit on `main`; the release workflow stops otherwise.
+```sh
+goreleaser release --snapshot --clean --skip=publish
+```
+
+The output is in ignored `dist/` and `.release-assets/`. The retained packaging
+configuration and generator support local packages and source recipes. Run
+`ruby scripts/packages_test.rb` and `native-packages validate` after packaging
+changes, then inspect the generated package contents and run each distribution's
+native build checks. Generation and syntax checks do not replace native package
+builds and review.
+
+Pushing a tag no longer publishes anything. A release, asset upload, AUR push,
+downstream request, or documentation update must be performed manually and only
+when wanted. Release tags must point to a commit already on the default branch.
+Never move or replace an existing published tag or archive. For publication from
+this fork, review and change the upstream repository and destination settings
+before running publishing commands; they currently target the upstream project.
+Update `docs/_data/versions.yml` manually when preparing a documentation version.
+The documentation sources can be built locally with `bundle install` followed by
+`bundle exec jekyll build` from `docs/`; this fork has no Pages site to deploy.
 
 ## Upstream Release Assets
 
-Each tagged release publishes:
+The upstream project publishes these assets independently of this fork:
 
 - `hyprmoncfg_<version>_linux_amd64.tar.gz`
 - `hyprmoncfg_<version>_linux_arm64.tar.gz`

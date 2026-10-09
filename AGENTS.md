@@ -21,7 +21,7 @@ apply unless a more specific instruction in this repository says otherwise.
 ## Reviews
 
 - Prioritize correctness, regressions, security, product fit, and unnecessary
-  dependencies. Green CI is necessary but is not proof of correctness.
+  dependencies. Passing local checks is necessary but is not proof of correctness.
 - State the user-visible UI impact at the start of every review.
 - For a user-visible interface change, require before-and-after screenshots at
   representative sizes and, where supported, light and dark themes. Treat
@@ -100,6 +100,10 @@ companion change and compatibility path; never claim parity from wire fields alo
   capability gaps; do not claim panel/TUI parity from formatting alone.
 
 ## Validation
+
+This personal fork builds and validates locally. GitHub Actions, automated issue
+assessment, documentation deployment, and tag-triggered publication are disabled.
+Do not recreate hosted workflows without an explicit maintainer request.
 
 Use deterministic regression tests for behavior, fake clients/clocks, and temporary
 files. Use protocol tests when changing client contracts. Documentation-only edits

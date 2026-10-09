@@ -14,7 +14,6 @@ and the [shared design](DESIGN.md) for accepted presentation conventions and sco
 
 [![GitHub Release](https://img.shields.io/github/v/release/crmne/hyprmoncfg)](https://github.com/crmne/hyprmoncfg/releases)
 [![AUR](https://img.shields.io/aur/version/hyprmoncfg)](https://aur.archlinux.org/packages/hyprmoncfg)
-[![CI](https://github.com/crmne/hyprmoncfg/actions/workflows/ci.yml/badge.svg)](https://github.com/crmne/hyprmoncfg/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 <a href="https://terminaltrove.com/hyprmoncfg/">
@@ -102,7 +101,7 @@ sudo xbps-install -S hyprland hyprmoncfg
 Build from source:
 
 ```bash
-git clone https://github.com/crmne/hyprmoncfg.git
+git clone https://github.com/mapleroyal/hyprmoncfg.git
 cd hyprmoncfg
 go build -o bin/hyprmoncfg  ./cmd/hyprmoncfg
 go build -o bin/hyprmoncfgd ./cmd/hyprmoncfgd
@@ -116,7 +115,9 @@ Install the shared CLI with `gem install native-packages --version 0.7.0`, build
 packages and AUR recipes with `native-packages build --release v<version>`, and track
 destinations with `native-packages status`. The other distributions' source recipes use
 `ruby scripts/package_sources.rb prepare <version>`.
-See [PACKAGING.md](PACKAGING.md) for staging, publishing, and release automation.
+See [PACKAGING.md](PACKAGING.md) for local archive builds and optional manual
+staging and publishing. The package registries and release links inherited from
+upstream describe upstream distribution; this personal fork runs no hosted builds.
 
 ## Configure Hyprland
 
@@ -264,7 +265,22 @@ Read [DESIGN.md](DESIGN.md) for the proposed shared daemon, TUI, and Omarchy-pan
 direction and the [dated baseline review](docs/design-review-2026-09-22.md) for
 release evidence and outstanding work. Proposed capabilities are not shipped features.
 
-Install the pre-commit hook to run CI checks locally before each commit:
+This personal fork builds and validates locally. GitHub Actions, automated issue
+assessment, documentation deployment, and tag-triggered release jobs are disabled.
+Pushing code or tags stores them on GitHub without running a hosted build.
+
+Run the local checks before publishing changes:
+
+```sh
+go mod tidy
+git diff --exit-code -- go.mod go.sum
+go test ./...
+go vet ./...
+go build ./cmd/hyprmoncfg ./cmd/hyprmoncfgd
+git diff --check
+```
+
+Install the pre-commit hook to run the Go checks before each commit:
 
 ```bash
 ln -sf "$(pwd)/scripts/pre-commit" .git/hooks/pre-commit
