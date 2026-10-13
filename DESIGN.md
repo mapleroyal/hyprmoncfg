@@ -126,6 +126,17 @@ it must not keep flipping modes rapidly. Report any fallback, and never overwrit
 the saved profile with the reduced mode. Compositor readback proves a mode was
 applied, not that a slow projector has finished showing a picture.
 
+Automatic fixed-mode preflight checks apply requests before changing any
+display: when a connected enabled output advertises modes but lacks the requested
+fixed resolution/refresh pair, keep the current layout and recheck with recovery
+backoff. A current working mode also qualifies. Missing capability metadata and
+compositor mode selectors retain existing behavior. Interactive custom-mode
+previews are unchanged. A saved numeric custom mode that is neither advertised
+nor currently driven stays deferred until it becomes available, is edited, or
+is applied through an explicit preview. Permanent absence has no automatic
+fallback; this guard does not implement mode fallback or repair dock/driver
+capability detection.
+
 ### Workspaces
 
 Inherit the base profile's enabled planner, strategy, group size, workspace count,

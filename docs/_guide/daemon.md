@@ -49,9 +49,10 @@ When the daemon detects a monitor or lid-state change, it runs through these ste
 2. Score every saved profile against the connected hardware (see [Profile matching](#profile-matching) below for how scoring works)
 3. Pick the highest-scoring profile
 4. If the lid is closed and an external monitor is already usable and will remain enabled, force internal laptop-panel outputs off for this apply
-5. Write the active generated monitor file atomically (temp file + rename, so a crash mid-write can't corrupt your config)
-6. Tell Hyprland to reload
-7. Re-read monitor state and verify the result matches what was intended
+5. Check that each enabled output's fixed mode is advertised or already being driven; otherwise defer without changing the layout
+6. Write the active generated monitor file atomically (temp file + rename, so a crash mid-write can't corrupt your config)
+7. Tell Hyprland to reload
+8. Re-read monitor state and verify the result matches what was intended
 
 If the winning profile is the same one that's already applied, the daemon skips re-applying it. You won't see unnecessary reloads.
 
@@ -74,6 +75,21 @@ first. Monitor/workspace discovery queries have a 750ms timeout. This does not
 prove physical projector readiness or recover an all-DPMS-off failed wake which
 cannot yet be distinguished from deliberate sleep.
 
+Before changing the layout, automatic reconciliation checks enabled outputs'
+fixed modes against each display's advertised resolution/refresh pairs. If a dock
+temporarily advertises fewer modes than a saved profile needs, the daemon leaves
+the current layout unchanged and rechecks with the same capped recovery backoff.
+Modes becoming available can resume the apply without another hotplug event.
+Saved profiles are unchanged. A currently driven mode is accepted even if omitted
+from the advertised list; absent mode metadata, automatic mode selectors, and
+custom modelines remain delegated to Hyprland. Interactive previews retain their
+existing custom-mode behavior. A numeric custom mode absent from the advertised
+list and current live mode will also stay deferred during automatic restoration.
+Edit the saved mode or explicitly preview and confirm it to use that mode. The
+reason is logged in the daemon journal; it is not a separate status field.
+Permanently missing modes have no automatic fallback, and this check does not
+repair dock or driver capability detection.
+
 Expiry of the overall apply-validation deadline remains a failed apply, preserving
 the last reported output mismatch and using recovery backoff. It is not classified
 as a transient busy read when a monitor query inherits that expired deadline.
@@ -94,7 +110,7 @@ When every enabled display is DPMS-off, the daemon treats monitor add/remove eve
 
 Suspend gets the same respect. The daemon listens for logind's sleep signal, and a lid close that suspends the machine is treated as suspend, not clamshell: the pending switch is discarded instead of being carried across the nap, because by the time it would run, the lid is open again and acting on the stale close would turn the panel off in your face. On resume the daemon re-reads the physical lid switch, tells Hyprland to wake every display -- so both screens light up from the lid opening, not from your first keypress -- and re-matches once the monitor set settles. Opening the lid wakes the displays the same way. As a last line of defense, every apply re-reads the lid switch first, so a stale cached lid state can never decide what happens to your panel.
 
-The daemon uses the **same apply engine** as the TUI. There is no separate "best effort" code path. If the TUI can apply a profile correctly, so can the daemon.
+The daemon uses the **same apply engine** as the TUI for writing, verification, and rollback. Automatic reconciliation first checks advertised fixed modes; explicit previews can request unadvertised custom modes. There is no separate "best effort" apply path.
 
 When the daemon is running, it is also the canonical writer. The TUI, CLI, and integrations connect to `$XDG_RUNTIME_DIR/hyprmoncfgd.sock` and ask the daemon to preview, confirm, revert, save, or delete through the same versioned IPC protocol. If the daemon is not running, the TUI and CLI acquire the writer lock and use the core engine directly.
 

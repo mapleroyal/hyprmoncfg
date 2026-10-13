@@ -872,6 +872,12 @@ func (s *Service) applyBestLocked(ctx context.Context) (resultErr error) {
 		_, err := s.cfg.LaptopToggle.Sync(effective, monitors)
 		return err
 	}
+	// Do not reload the whole layout into an unadvertised fixed mode and then
+	// roll it back on every recovery tick. Recovery keeps querying, so a dock
+	// whose advertised modes settle later can recover without another hotplug.
+	if err := apply.ValidateAdvertisedModes(effective, monitors); err != nil {
+		return fmt.Errorf("automatic profile %q deferred: %w", target.Name, err)
+	}
 	if manualHold {
 		s.cfg.Logf("restoring manually selected profile %q after an external change", target.Name)
 	}

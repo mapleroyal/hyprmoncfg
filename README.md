@@ -165,6 +165,11 @@ The daemon scores profiles in `~/.config/hyprmoncfg/profiles/` against the conne
 
 When a dock is still connecting, monitor and workspace reads have short deadlines and desktop clients can show a connecting state while retrying. Unique hardware identities skip DRM connector probing; ambiguous identities use one shared probe with bounded waiting. See [daemon behavior](https://hyprmoncfg.dev/daemon/) and the [editor IPC reference](https://hyprmoncfg.dev/ipc/) for the matching and query-timeout contracts.
 
+Automatic switching defers unadvertised fixed modes before changing the layout,
+then rechecks with capped backoff as the dock's advertised modes settle. It keeps
+the current layout and saved profiles intact during that wait. Explicit previews
+can still apply custom modes; permanent absence does not trigger mode fallback.
+
 Newly connected displays extend the matching layout to the right, touching its rightmost display. Automatically extended layouts appear as unsaved drafts in the editor and panel; save one to name and reuse it. Workspace planning follows the profile's settings, or defaults to sequential groups of three across nine workspaces when planning was disabled. In the TUI, press `U` to toggle disabling displays outside the profile, then save. The corresponding profile JSON setting is `disable_unknown_outputs` (default `false`). Displays explicitly saved as disabled stay disabled.
 
 On Omarchy versions that launch `omarchy-hyprland-monitor-watch`, `hyprmoncfgd` stops that exact transient user scope while it owns monitor profiles and restores the watcher when the daemon exits during a live Hyprland session. Generated configuration used without the daemon cannot provide this runtime ownership; static-config users must disable the Omarchy watcher separately.
